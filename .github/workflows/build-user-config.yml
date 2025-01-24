@@ -19,8 +19,8 @@ on:
         required: false
         type: string
       archive_name:
-        description: 'Archive output file name'
-        default: 'firmware'
+        description: "Archive output file name"
+        default: "firmware"
         required: false
         type: string
 
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Fetch Build Keyboards
     outputs:
-      build_matrix: ${{ env.build_matrix }}
+      build_matrix: ${{ steps.set_matrix.outputs.build_matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -38,8 +38,9 @@ jobs:
         run: python3 -m pip install remarshal
 
       - name: Fetch Build Matrix
+        id: set_matrix
         run: |
-          echo "build_matrix=$(yaml2json ${{ inputs.build_matrix_path }} | jq -c .)" >> $GITHUB_ENV
+          echo "build_matrix=$(yaml2json ${{ inputs.build_matrix_path }} | jq -c .)" >> $GITHUB_OUTPUT
           yaml2json ${{ inputs.build_matrix_path }} | jq
 
   build:
@@ -53,19 +54,20 @@ jobs:
       matrix: ${{ fromJson(needs.matrix.outputs.build_matrix) }}
     steps:
       - name: Prepare variables
+        id: prep
         shell: sh -x {0}
         run: |
           if [ -n "${{ matrix.shield }}" ]
           then
-            echo "extra_cmake_args=-DSHIELD=\"${{ matrix.shield }}\"" >> $GITHUB_ENV
-            echo "artifact_name=${{ matrix.shield }}-${{ matrix.board }}-zmk" >> $GITHUB_ENV
-            echo "display_name=${{ matrix.shield }} - ${{ matrix.board }}" >> $GITHUB_ENV
+            echo "extra_cmake_args=-DSHIELD=\"${{ matrix.shield }}\"" >> $GITHUB_OUTPUT
+            echo "artifact_name=${{ matrix.shield }}-${{ matrix.board }}-zmk" >> $GITHUB_OUTPUT
+            echo "display_name=${{ matrix.shield }} - ${{ matrix.board }}" >> $GITHUB_OUTPUT
           else
-            echo "extra_cmake_args=" >> $GITHUB_ENV
-            echo "artifact_name=${{ matrix.board }}-zmk" >> $GITHUB_ENV
-            echo "display_name=${{ matrix.board }}" >> $GITHUB_ENV
+            echo "extra_cmake_args=" >> $GITHUB_OUTPUT
+            echo "artifact_name=${{ matrix.board }}-zmk" >> $GITHUB_OUTPUT
+            echo "display_name=${{ matrix.board }}" >> $GITHUB_OUTPUT
           fi
-          echo "zephyr_version=${ZEPHYR_VERSION}" >> $GITHUB_ENV
+          echo "zephyr_version=${ZEPHYR_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Checkout
         uses: actions/checkout@v3
@@ -74,7 +76,7 @@ jobs:
         uses: actions/cache@v4
         continue-on-error: true
         env:
-          cache_name: cache-zephyr-${{ env.zephyr_version }}-modules
+          cache_name: cache-zephyr-${{ steps.prep.outputs.zephyr_version }}-modules
         with:
           path: |
             modules/
@@ -97,11 +99,11 @@ jobs:
       - name: West Zephyr export
         run: west zephyr-export
 
-      - name: West Build (${{ env.display_name }})
+      - name: West Build (${{ steps.prep.outputs.display_name }})
         shell: sh -x {0}
-        run: west build -s zmk/app -b ${{ matrix.board }} -- -DZMK_CONFIG=${GITHUB_WORKSPACE}/${{ inputs.config_path }} ${{ env.extra_cmake_args }} ${{ matrix.cmake-args }}
+        run: west build -s zmk/app -b ${{ matrix.board }} -- -DZMK_CONFIG=${GITHUB_WORKSPACE}/${{ inputs.config_path }} ${{ steps.prep.outputs.extra_cmake_args }} ${{ matrix.cmake-args }}
 
-      - name: ${{ env.display_name }} Kconfig file
+      - name: ${{ steps.prep.outputs.display_name }} Kconfig file
         run: grep -v -e "^#" -e "^$" build/zephyr/.config | sort
 
       - name: Rename artifacts
@@ -110,21 +112,15 @@ jobs:
           mkdir build/artifacts
           if [ -f build/zephyr/zmk.uf2 ]
           then
-            cp build/zephyr/zmk.uf2 "build/artifacts/${{ env.artifact_name }}.uf2"
+            cp build/zephyr/zmk.uf2 "build/artifacts/${{ steps.prep.outputs.artifact_name }}.uf2"
           elif [ -f build/zephyr/zmk.${{ inputs.fallback_binary }} ]
           then
-            cp build/zephyr/zmk.${{ inputs.fallback_binary }} "build/artifacts/${{ env.artifact_name }}.${{ inputs.fallback_binary }}"
+            cp build/zephyr/zmk.${{ inputs.fallback_binary }} "build/artifacts/${{ steps.prep.outputs.artifact_name }}.${{ inputs.fallback_binary }}"
           fi
-          
-      - name: List artifacts
-        run: ls -l build/artifacts
 
-      - name: List artifacts
-        run: ls -l build/artifacts
-
-      - name: Archive (${{ env.display_name }})
+      - name: Archive (${{ steps.prep.outputs.artifact_name }}.uf2)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.archive_name }}
+          name: ${{ steps.prep.outputs.artifact_name }}.uf2
           path: build/artifacts/*
           overwrite: true
